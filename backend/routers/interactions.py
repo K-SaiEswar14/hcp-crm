@@ -24,6 +24,13 @@ def extract_json(text):
         pass
     return {}
 
+def clean_value(value):
+    if isinstance(value, list):
+        return ', '.join(str(v) for v in value)
+    if value is None:
+        return ''
+    return str(value)
+
 @router.post("/interactions")
 def create_interaction(data: InteractionCreate, db: Session = Depends(get_db)):
     record = HCPInteraction(**data.dict())
@@ -50,26 +57,30 @@ def update_interaction(id: int, data: dict, db: Session = Depends(get_db)):
 async def chat_with_agent(message: ChatMessage, db: Session = Depends(get_db)):
     try:
         prompt = f"""Extract these fields from this text and return ONLY a JSON object:
-hcp_name (doctor name), interaction_type (Meeting/Call/Email), topics_discussed, materials_shared, sentiment (Positive/Neutral/Negative).
+hcp_name (doctor name), interaction_type (Meeting/Call/Email), topics_discussed (string), materials_shared (string), sentiment (Positive/Neutral/Negative).
+All values must be strings not lists.
 Text: {message.text}
 Return only JSON, no explanation."""
-        
+
         response = llm.invoke(prompt)
         data = extract_json(response.content)
-        
+
         if not data:
             data = {
                 "hcp_name": "Unknown",
-                "interaction_type": "Meeting", 
+                "interaction_type": "Meeting",
                 "topics_discussed": message.text,
                 "materials_shared": "",
                 "sentiment": "Neutral"
             }
 
-        safe_data = {k: v for k, v in data.items() if k in [
-            'hcp_name', 'interaction_type', 'topics_discussed',
-            'materials_shared', 'sentiment', 'outcomes', 'follow_up_actions'
-        ]}
+        allowed_keys = ['hcp_name', 'interaction_type', 'topics_discussed',
+                        'materials_shared', 'sentiment', 'outcomes', 'follow_up_actions']
+
+        safe_data = {}
+        for k, v in data.items():
+            if k in allowed_keys:
+                safe_data[k] = clean_value(v)
 
         record = HCPInteraction(**safe_data)
         db.add(record)
